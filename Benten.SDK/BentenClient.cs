@@ -73,6 +73,20 @@ public class BentenClient
     private static readonly TimeSpan DefaultReceiveTimeout = TimeSpan.FromSeconds(75);
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(30);
 
+    // Transport limits. Internal so tests can shorten them; the defaults are what ships.
+
+    /// <summary>How long to wait for the Benten API's reply after sending a request.</summary>
+    internal TimeSpan ResponseTimeout { get; set; } = DefaultReceiveTimeout;
+
+    /// <summary>How long to wait for the WebSocket connection to open.</summary>
+    internal TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long to spend sending the close message once the reply has arrived.</summary>
+    internal TimeSpan CloseTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>The largest reply the SDK accepts. Real replies are well under 10 KB.</summary>
+    internal int MaxResponseBytes { get; set; } = 1024 * 1024;
+
     /// <summary>
     /// Initialises a new <see cref="BentenClient"/> pointing at the production
     /// Benten API (<see cref="DefaultServerUrl"/>).
@@ -326,9 +340,16 @@ public class BentenClient
 
     /// <summary>
     /// Opens a WebSocket to <paramref name="route"/>, sends <paramref name="requestObj"/>
-    /// as JSON, waits for a JSON response, performs the close handshake, and
-    /// returns the raw response string.
+    /// as JSON, reads the server's complete reply, closes the connection, and
+    /// returns the reply as a string.
     /// </summary>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled by the caller.
+    /// </exception>
+    /// <exception cref="BentenException">
+    /// The connection could not be opened, failed, was closed by the server before
+    /// it replied, the reply was too large, or no reply arrived in time.
+    /// </exception>
     private async Task<string> SendWebSocketRequestAsync(
         string route,
         object requestObj,
@@ -338,43 +359,124 @@ public class BentenClient
         using var ws = new ClientWebSocket();
         ws.Options.KeepAliveInterval = KeepAliveInterval;
 
-        try
+        // 1. Connect, with its own time limit.
+        using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            await ws.ConnectAsync(new Uri(url), cancellationToken);
+            connectCts.CancelAfter(ConnectTimeout);
+            try
+            {
+                await ws.ConnectAsync(new Uri(url), connectCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (Exception ex) when (connectCts.IsCancellationRequested)
+            {
+                throw new BentenException(
+                    $"Could not connect to {url} within {ConnectTimeout.TotalSeconds:0} seconds.", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new BentenException($"Failed to connect to {url}: {ex.Message}", ex);
+            }
         }
-        catch (Exception ex)
-        {
-            throw new BentenException($"Failed to connect to {url}: {ex.Message}", ex);
-        }
 
-        // Send request
-        var json  = JsonConvert.SerializeObject(requestObj);
-        var bytes = Encoding.UTF8.GetBytes(json);
-        await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cancellationToken);
-
-        // Receive response (server sends one message then waits for close)
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(DefaultReceiveTimeout);
-
-        var buffer = new byte[4 * 1024];
+        // 2. Send the request and read the complete reply, within the response time limit.
         string rawResponse;
-        try
+        using (var responseCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
-            rawResponse = Encoding.UTF8.GetString(buffer, 0, result.Count);
-        }
-        catch (OperationCanceledException)
-        {
-            throw new BentenException($"Timed out waiting for response from {route} after {DefaultReceiveTimeout.TotalSeconds}s.");
+            responseCts.CancelAfter(ResponseTimeout);
+            try
+            {
+                var bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(requestObj));
+                await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, responseCts.Token)
+                        .ConfigureAwait(false);
+
+                rawResponse = await ReceiveMessageAsync(ws, route, responseCts.Token).ConfigureAwait(false);
+            }
+            catch (BentenException)
+            {
+                throw;
+            }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (Exception ex) when (responseCts.IsCancellationRequested)
+            {
+                throw new BentenException(
+                    $"No reply from the Benten API ({route}) within {ResponseTimeout.TotalSeconds:0} seconds.", ex);
+            }
+            catch (Exception ex) when (ex is WebSocketException or IOException)
+            {
+                throw new BentenException($"The connection to the Benten API failed ({route}): {ex.Message}", ex);
+            }
         }
 
-        // Initiate close handshake
-        if (ws.State == WebSocketState.Open)
-        {
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None);
-        }
+        // 3. Close politely without waiting for the server; the reply is already in hand.
+        await CloseQuietlyAsync(ws).ConfigureAwait(false);
 
         return rawResponse;
+    }
+
+    /// <summary>
+    /// Reads one complete WebSocket message, which may arrive in several frames,
+    /// and decodes it as UTF-8 once all of it has arrived.
+    /// </summary>
+    private async Task<string> ReceiveMessageAsync(ClientWebSocket ws, string route, CancellationToken token)
+    {
+        var buffer = new byte[4 * 1024];
+        using var message = new MemoryStream();
+
+        while (true)
+        {
+            var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), token).ConfigureAwait(false);
+
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                string reason = result.CloseStatusDescription ?? string.Empty;
+                string status = result.CloseStatus?.ToString() ?? "no close status";
+                throw new BentenException(
+                    $"The Benten API closed the connection ({route}) without replying: {status}" +
+                    (reason.Length > 0 ? $", \"{reason}\"." : "."),
+                    BentenStatusCodes.FindCode(reason),
+                    null);
+            }
+
+            if (message.Length + result.Count > MaxResponseBytes)
+            {
+                throw new BentenException(
+                    $"The reply from the Benten API ({route}) is larger than {MaxResponseBytes / 1024} KB.");
+            }
+
+            message.Write(buffer, 0, result.Count);
+
+            if (result.EndOfMessage)
+                break;
+        }
+
+        return Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+    }
+
+    /// <summary>
+    /// Sends the WebSocket close message without waiting for the server to answer it,
+    /// and ignores any failure: by now the reply has been received.
+    /// </summary>
+    private async Task CloseQuietlyAsync(ClientWebSocket ws)
+    {
+        if (ws.State is not (WebSocketState.Open or WebSocketState.CloseReceived))
+            return;
+
+        using var cts = new CancellationTokenSource(CloseTimeout);
+        try
+        {
+            await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Done", cts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore: the request already succeeded.
+        }
     }
 
     // -------------------------------------------------------------------------

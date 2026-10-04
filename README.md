@@ -210,7 +210,12 @@ else if (tokenResult.HasError)
 ### Errors: returned vs. thrown
 
 - **Returned:** errors reported by the Benten API for an approval request (invalid token, unknown phone number, inactive device…) come back in the result with `Outcome == ApprovalOutcome.Error`. Nothing is thrown.
-- **Thrown:** connection failures, timeouts waiting for the server, and a failed `GetBearerTokenAsync` throw a `BentenException`. For a failed token request, `BentenException.ErrorCode` holds the status code (e.g. `BSC4002` for a wrong password) and `StatusCode` holds the HTTP status.
+- **Thrown as `BentenException`:** problems talking to the Benten API, and a failed `GetBearerTokenAsync`:
+  - the connection can't be opened within 15 seconds, or fails partway through;
+  - the server closes the connection without replying (the message includes its reason, and `ErrorCode` holds any status code in it);
+  - no reply arrives within 75 seconds (the server itself replies `NoResponse` after 60 seconds, so this means the server or network is in trouble);
+  - for a failed token request, `ErrorCode` holds the status code (e.g. `BSC4002` for a wrong password) and `StatusCode` holds the HTTP status.
+- **Thrown as `OperationCanceledException`:** you cancelled the request through the `CancellationToken` you passed in. This is never reported as a timeout, so you can tell the two apart.
 
 ```csharp
 try

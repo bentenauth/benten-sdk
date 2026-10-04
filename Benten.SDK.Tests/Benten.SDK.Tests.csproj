@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Hosts a small in-process WebSocket server for the transport tests -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Benten.SDK\Benten.SDK.csproj" />
   </ItemGroup>
 
