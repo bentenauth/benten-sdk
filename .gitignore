@@ -1,0 +1,17 @@
+## .NET
+bin/
+obj/
+*.user
+.vs/
+*.suo
+*.ncrunchsolution
+
+## NuGet
+*.nupkg
+*.snupkg
+
+## Secrets — never commit these
+appsettings.*.json
+*firebase-adminsdk*.json
+*serviceAccountKey*.json
+secrets.json

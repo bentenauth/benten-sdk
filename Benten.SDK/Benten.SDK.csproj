@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Benten.SDK</AssemblyName>
+    <RootNamespace>Benten.SDK</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>Benten Technologies</Authors>
+    <Description>Client SDK for the Benten Authentication and Authorization Platform. Enables applications to request user approval for login, credit card transactions, IoT setting changes, and generic notifications via push notification.</Description>
+    <PackageTags>benten;authentication;authorization;push-notification;websocket</PackageTags>
+    <RepositoryUrl>https://github.com/bentenauth/benten-sdk</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Benten.SDK.Tests" />
+  </ItemGroup>
+
+</Project>
