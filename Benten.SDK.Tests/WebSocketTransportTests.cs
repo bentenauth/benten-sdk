@@ -101,14 +101,16 @@ public class WebSocketTransportTests
             afterReply = (await ws.ReceiveAsync(buffer, cts.Token)).MessageType;
         });
 
-        var result = await server.Client().RequestLoginApprovalAsync("my-jwt", Login());
+        var login = Login();
+        var result = await server.Client().RequestLoginApprovalAsync("my-jwt", login);
         await server.WaitForHandlerAsync();
 
         Assert.True(result.IsApproved);
         Assert.NotNull(receivedRequest);
         Assert.Contains("\"RequestType\":\"LoginRequest\"", receivedRequest!);
         Assert.Contains("\"JWT\":\"my-jwt\"", receivedRequest!);
-        Assert.Contains("\"_id\":", receivedRequest!);
+        Assert.Contains($"\"RequestId\":\"{login.RequestId}\"", receivedRequest!);
+        Assert.False(receivedRequest!.Contains("\"_id\""));
         Assert.Equal(WebSocketMessageType.Close, afterReply);
     }
 

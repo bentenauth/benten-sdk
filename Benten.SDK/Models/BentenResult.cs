@@ -25,7 +25,10 @@ namespace Benten.SDK.Models;
 /// </example>
 public class BentenResult
 {
-    /// <summary>The request ID (<c>_id</c>) echoed in the server response.</summary>
+    /// <summary>
+    /// The request ID echoed by the server (from <c>RequestId</c> or <c>_id</c> in the reply).
+    /// Matches <see cref="ClientRequest.RequestId"/> of the request that produced this result.
+    /// </summary>
     public string RequestId { get; set; } = string.Empty;
 
     /// <summary>

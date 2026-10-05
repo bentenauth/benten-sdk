@@ -203,7 +203,7 @@ else if (tokenResult.HasError)
 | `ErrorCode` | Benten status code when the request failed, e.g. `BSC4022`. Empty if the server sent only a message. |
 | `ErrorMessage` | Human-readable description, e.g. "No registered device found for the given country and phone number." |
 | `Error` | `ErrorCode` and `ErrorMessage` combined for display, e.g. `BSC4022: No registered device found…` |
-| `RequestId` | The request ID (`_id`) echoed by the server |
+| `RequestId` | Your request's ID (`ClientRequest.RequestId`), echoed by the server so you can match replies to requests |
 | `Response` | Raw `Response` value from the server ("Allow", "Deny", "NoResponse", or a status code) |
 | `RawResponse` | Full string received from the server |
 
@@ -246,6 +246,8 @@ Benten API uses `BSCxxxx` status codes in error responses. The SDK puts the code
 | `BSC4067` | Phone number not found |
 | `BSC4068` | Request denied by user |
 | `BSC4069` | Token security key unavailable |
+| `BSC4073` | Invalid request: the server could not read the request message |
+| `BSC4074` | Request message is too large |
 | `NoResponse` | User did not respond within 60 seconds |
 
 ---

@@ -15,7 +15,7 @@ public abstract class ClientRequest
 {
     /// <summary>
     /// Initialises a new <see cref="ClientRequest"/> with the specified request type
-    /// and an auto-generated <see cref="_id"/>.
+    /// and a new, unique <see cref="RequestId"/>.
     /// </summary>
     /// <param name="requestType">
     /// A string token identifying the request category (e.g. <c>"LoginRequest"</c>,
@@ -24,15 +24,16 @@ public abstract class ClientRequest
     protected ClientRequest(string requestType)
     {
         RequestType = requestType;
-        _id = Guid.NewGuid().ToString();
+        RequestId = Guid.NewGuid().ToString();
     }
 
     /// <summary>
-    /// Unique identifier for this request. Auto-generated if not provided.
-    /// The server echoes this value back in its response so you can correlate
-    /// responses to requests.
+    /// Unique identifier for this request, sent to the server as <c>RequestId</c>.
+    /// A new GUID is generated for every request. If you set your own value, it
+    /// must be unique per request: never reuse an ID or use a fixed value.
+    /// The server echoes it back, and it appears as <see cref="BentenResult.RequestId"/>.
     /// </summary>
-    public string _id { get; set; }
+    public string RequestId { get; set; }
 
     /// <summary>
     /// Identifies the type of request. Set automatically by each subclass.

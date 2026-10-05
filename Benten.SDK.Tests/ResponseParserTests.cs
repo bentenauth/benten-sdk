@@ -7,7 +7,8 @@ namespace Benten.SDK.Tests;
 
 /// <summary>
 /// Parsing tests for Benten API responses. The JSON fixtures are taken from
-/// API-REFERENCE.md, with the request ID in "_id" as the server sends it.
+/// API-REFERENCE.md and match what BentenAPI sends: Allow/Deny replies carry the
+/// request ID as "_id"; error and NoResponse replies carry it as "RequestId".
 /// </summary>
 public class ResponseParserTests
 {
@@ -39,7 +40,7 @@ public class ResponseParserTests
     public void NoResponse_IsTimedOut()
     {
         var r = ResponseParser.ParseApproval(
-            """{ "_id": "5bdd322d-688d-4261-b47d-c6e5f9f3b907", "Country": "United States", "PhoneNumber": "6501111111", "Response": "NoResponse" }""");
+            """{ "RequestId": "5bdd322d-688d-4261-b47d-c6e5f9f3b907", "Country": "United States", "PhoneNumber": "6501111111", "Response": "NoResponse" }""");
         Assert.Equal(ApprovalOutcome.TimedOut, r.Outcome);
         Assert.True(r.IsTimedOut);
         Assert.False(r.HasError);
@@ -63,7 +64,7 @@ public class ResponseParserTests
         // Login error example from API-REFERENCE.md
         var r = ResponseParser.ParseApproval("""
             {
-              "_id": "8e8ec2e3-afb5-4b25-b118-e6134e687830",
+              "RequestId": "8e8ec2e3-afb5-4b25-b118-e6134e687830",
               "Username": "alfie.noakes@benten.com",
               "Country": "United States",
               "PhoneNumber": "6501111111",
@@ -171,14 +172,28 @@ public class ResponseParserTests
         Assert.Equal("x", r.RequestId);
     }
 
-    [Fact]
-    public void RequestId_IsReadFromUnderscoreId_Only()
+    [Theory]
+    [InlineData("""{ "_id": "id-1", "Response": "Allow" }""", "id-1")]                          // Allow/Deny reply
+    [InlineData("""{ "RequestId": "id-2", "Response": "BSC4019" }""", "id-2")]                  // error reply
+    [InlineData("""{ "RequestId": "id-3", "_id": "id-3", "Response": "Allow" }""", "id-3")]     // both (fixed server)
+    [InlineData("""{ "RequestId": "", "_id": "id-4", "Response": "Allow" }""", "id-4")]         // empty RequestId falls back
+    [InlineData("""{ "Response": "Allow" }""", "")]
+    public void RequestId_IsReadFromRequestIdOrUnderscoreId(string raw, string expected)
     {
-        var r = ResponseParser.ParseApproval("""{ "RequestId": "not-this-one", "_id": "this-one", "Response": "Allow" }""");
-        Assert.Equal("this-one", r.RequestId);
+        Assert.Equal(expected, ResponseParser.ParseApproval(raw).RequestId);
+        Assert.Equal(expected, ResponseParser.ParseAuthToken(raw).RequestId);
+    }
 
-        var r2 = ResponseParser.ParseApproval("""{ "RequestId": "not-this-one", "Response": "Allow" }""");
-        Assert.Equal("", r2.RequestId);
+    [Fact]
+    public void Requests_GetUniqueRequestIds()
+    {
+        var a = new LoginRequest();
+        var b = new LoginRequest();
+        var t = new AuthTokenRequest();
+
+        Assert.False(string.IsNullOrWhiteSpace(a.RequestId));
+        Assert.NotEqual(a.RequestId, b.RequestId);
+        Assert.False(string.IsNullOrWhiteSpace(t.RequestId));
     }
 
     [Fact]

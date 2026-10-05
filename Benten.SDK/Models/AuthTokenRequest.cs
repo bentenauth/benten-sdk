@@ -21,10 +21,12 @@ namespace Benten.SDK.Models;
 public class AuthTokenRequest
 {
     /// <summary>
-    /// Unique identifier for this request. Auto-generated if not set.
-    /// Echoed back in the server response.
+    /// Unique identifier for this request, sent to the server as <c>RequestId</c>.
+    /// A new GUID is generated for every request. If you set your own value, it
+    /// must be unique per request. The server echoes it back, and it appears as
+    /// <see cref="AuthTokenResult.RequestId"/>.
     /// </summary>
-    public string _id { get; set; } = Guid.NewGuid().ToString();
+    public string RequestId { get; set; } = Guid.NewGuid().ToString();
 
     /// <summary>
     /// The country associated with the Benten user's phone number (e.g. "United States").

@@ -14,7 +14,10 @@ namespace Benten.SDK.Models;
 /// </summary>
 public class AuthTokenResult
 {
-    /// <summary>The request ID (<c>_id</c>) echoed in the server response.</summary>
+    /// <summary>
+    /// The request ID echoed by the server (from <c>RequestId</c> or <c>_id</c> in the reply).
+    /// Matches <see cref="AuthTokenRequest.RequestId"/>.
+    /// </summary>
     public string RequestId { get; set; } = string.Empty;
 
     /// <summary>

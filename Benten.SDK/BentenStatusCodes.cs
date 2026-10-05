@@ -65,6 +65,8 @@ public static class BentenStatusCodes
             ["BSC4067"] = "Phone number not found.",
             ["BSC4068"] = "Request denied by user.",
             ["BSC4069"] = "Token security key unavailable. Contact Benten support.",
+            ["BSC4073"] = "Invalid request. The server could not read the request message.",
+            ["BSC4074"] = "Request message is too large.",
             ["BSC5000"] = "Internal server error. Try again later.",
         };
 

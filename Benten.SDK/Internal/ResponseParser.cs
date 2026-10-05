@@ -16,7 +16,8 @@ namespace Benten.SDK.Internal;
 /// </summary>
 /// <remarks>
 /// The approval endpoints reply with JSON such as
-/// <c>{ "_id": "...", "Response": "Allow" }</c>. Errors arrive in the same
+/// <c>{ "_id": "...", "Response": "Allow" }</c>. The request ID arrives as
+/// <c>RequestId</c> or <c>_id</c>, depending on the reply. Errors arrive in the same
 /// <c>Response</c> field as a Benten status code (e.g. <c>"BSC4019"</c>), in an
 /// <c>Error</c> field, or occasionally as plain text. This parser handles all
 /// three, plus JSON that the server has serialized twice.
@@ -37,7 +38,7 @@ internal static class ResponseParser
         string response, error;
         if (TryParseObject(raw, out var obj))
         {
-            result.RequestId = GetString(obj, "_id");
+            result.RequestId = ReadRequestId(obj);
             response = GetString(obj, "Response");
             error    = GetString(obj, "Error");
         }
@@ -66,7 +67,7 @@ internal static class ResponseParser
         string response, error;
         if (TryParseObject(raw, out var obj))
         {
-            result.RequestId   = GetString(obj, "_id");
+            result.RequestId   = ReadRequestId(obj);
             result.Country     = GetString(obj, "Country");
             result.PhoneNumber = GetString(obj, "PhoneNumber");
             result.Token       = GetString(obj, "Token");
@@ -230,6 +231,13 @@ internal static class ResponseParser
 
         return string.Empty;
     }
+
+    /// <summary>
+    /// Reads the echoed request ID. The Benten API returns it as <c>RequestId</c>
+    /// in error and <c>NoResponse</c> replies, and as <c>_id</c> in Allow/Deny replies.
+    /// </summary>
+    internal static string ReadRequestId(JsonElement obj) =>
+        FirstNonEmpty(GetString(obj, "RequestId"), GetString(obj, "_id"));
 
     private static bool Is(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
