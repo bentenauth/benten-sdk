@@ -13,7 +13,29 @@
     <RepositoryUrl>https://github.com/bentenauth/benten-sdk</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- NuGet package -->
+    <PackageId>Benten.SDK</PackageId>
+    <Copyright>Copyright © 2026 Benten Technologies</Copyright>
+    <PackageProjectUrl>https://bententechnologies.com/sdk.html</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageReleaseNotes>First release. Authenticate with an API key from the Benten developer dashboard: new BentenClient(apiKey). Request approval for logins, credit card transactions, IoT setting changes and generic notifications.</PackageReleaseNotes>
+
+    <!-- Symbols and Source Link, so developers can step into the SDK when debugging -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(Configuration)' == 'Release'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="icon.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
