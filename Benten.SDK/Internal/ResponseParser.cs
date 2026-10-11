@@ -58,55 +58,6 @@ internal static class ResponseParser
     }
 
     /// <summary>
-    /// Parses the reply from the push-to-approve token endpoint (<c>auth/authtokenrequest/</c>).
-    /// </summary>
-    public static AuthTokenResult ParseAuthToken(string? raw)
-    {
-        var result = new AuthTokenResult { RawResponse = raw ?? string.Empty };
-
-        string response, error;
-        if (TryParseObject(raw, out var obj))
-        {
-            result.RequestId   = ReadRequestId(obj);
-            result.Country     = GetString(obj, "Country");
-            result.PhoneNumber = GetString(obj, "PhoneNumber");
-            result.Token       = GetString(obj, "Token");
-            response = GetString(obj, "Response");
-            error    = GetString(obj, "Error");
-        }
-        else
-        {
-            response = raw?.Trim() ?? string.Empty;
-            error    = string.Empty;
-        }
-
-        result.Response = response;
-
-        // A token with no error means the user approved.
-        if (!string.IsNullOrWhiteSpace(result.Token) && string.IsNullOrWhiteSpace(error)
-            && !BentenStatusCodes.IsStatusCode(response))
-        {
-            result.Outcome = ApprovalOutcome.Approved;
-            return result;
-        }
-
-        var (outcome, code, message) = Classify(response, error);
-
-        // "Allow" without a token is not a usable result.
-        if (outcome == ApprovalOutcome.Approved)
-        {
-            outcome = ApprovalOutcome.Error;
-            message = "The user approved the request, but the server did not return a token.";
-        }
-
-        result.Outcome      = outcome;
-        result.ErrorCode    = code;
-        result.ErrorMessage = message;
-        result.Token        = string.Empty;
-        return result;
-    }
-
-    /// <summary>
     /// Reads an error code and message from a failed REST response body
     /// (e.g. <c>auth/token</c>). Returns empty strings if none can be found.
     /// </summary>
@@ -133,10 +84,19 @@ internal static class ResponseParser
     }
 
     /// <summary>
-    /// Reads the JWT from a successful <c>auth/token</c> response body.
+    /// Reads the access token and its lifetime from a successful <c>auth/token</c>
+    /// response body: <c>{ "Token": "eyJ...", "ExpiresIn": 3600 }</c>.
+    /// ExpiresIn is 0 if missing.
     /// </summary>
-    public static string ParseBearerToken(string? body) =>
-        TryParseObject(body, out var obj) ? GetString(obj, "Token") : string.Empty;
+    public static (string Token, int ExpiresInSeconds) ParseAccessToken(string? body)
+    {
+        if (!TryParseObject(body, out var obj))
+            return (string.Empty, 0);
+
+        int.TryParse(GetString(obj, "ExpiresIn"), System.Globalization.NumberStyles.Integer,
+                     System.Globalization.CultureInfo.InvariantCulture, out int expiresIn);
+        return (GetString(obj, "Token"), Math.Max(0, expiresIn));
+    }
 
     /// <summary>
     /// Decides the outcome from the <c>Response</c> and <c>Error</c> fields.

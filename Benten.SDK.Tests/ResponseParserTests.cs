@@ -89,6 +89,7 @@ public class ResponseParserTests
     [InlineData("BSC4060", "Invalid Benten credit card ID.")]
     [InlineData("BSC4062", "No IoT device found for the given name and MAC address.")]
     [InlineData("BSC4065", "Default Benten account unavailable. Contact Benten support.")]
+    [InlineData("BSC4079", "Too many notifications sent to this phone. Try again in a few minutes.")]
     public void KnownStatusCodes_HaveMessages(string code, string message)
     {
         var r = ResponseParser.ParseApproval($$"""{ "_id": "x", "Response": "{{code}}" }""");
@@ -181,7 +182,6 @@ public class ResponseParserTests
     public void RequestId_IsReadFromRequestIdOrUnderscoreId(string raw, string expected)
     {
         Assert.Equal(expected, ResponseParser.ParseApproval(raw).RequestId);
-        Assert.Equal(expected, ResponseParser.ParseAuthToken(raw).RequestId);
     }
 
     [Fact]
@@ -189,11 +189,9 @@ public class ResponseParserTests
     {
         var a = new LoginRequest();
         var b = new LoginRequest();
-        var t = new AuthTokenRequest();
 
         Assert.False(string.IsNullOrWhiteSpace(a.RequestId));
         Assert.NotEqual(a.RequestId, b.RequestId);
-        Assert.False(string.IsNullOrWhiteSpace(t.RequestId));
     }
 
     [Fact]
@@ -204,71 +202,15 @@ public class ResponseParserTests
         Assert.False(r.IsApproved);
     }
 
-    // ── Push-to-approve token ───────────────────────────────────────────────
+    // ── Access token (auth/token) ───────────────────────────────────────────
 
     [Fact]
-    public void AuthToken_WithToken_IsSuccess()
+    public void AccessToken_IsRead()
     {
-        var r = ResponseParser.ParseAuthToken(
-            """{ "_id": "x", "Country": "United States", "PhoneNumber": "6501234567", "Token": "eyJhbGciOi.payload.sig" }""");
-        Assert.True(r.IsSuccess);
-        Assert.Equal(ApprovalOutcome.Approved, r.Outcome);
-        Assert.Equal("eyJhbGciOi.payload.sig", r.Token);
-        Assert.Equal("6501234567", r.PhoneNumber);
-    }
-
-    [Fact]
-    public void AuthToken_StatusCode_IsError()
-    {
-        var r = ResponseParser.ParseAuthToken("""{ "_id": "x", "Response": "BSC4067" }""");
-        Assert.True(r.HasError);
-        Assert.False(r.IsSuccess);
-        Assert.Equal("BSC4067", r.ErrorCode);
-        Assert.Equal("Phone number not found.", r.ErrorMessage);
-    }
-
-    [Theory]
-    [InlineData("""{ "_id": "x", "Response": "Deny" }""")]
-    [InlineData("""{ "_id": "x", "Error": "BSC4068" }""")]
-    public void AuthToken_Denied(string raw)
-    {
-        var r = ResponseParser.ParseAuthToken(raw);
-        Assert.True(r.IsDenied);
-        Assert.False(r.IsSuccess);
-        Assert.False(r.HasError);
-    }
-
-    [Fact]
-    public void AuthToken_NoResponse_IsTimedOut()
-    {
-        var r = ResponseParser.ParseAuthToken("""{ "_id": "x", "Response": "NoResponse" }""");
-        Assert.True(r.IsTimedOut);
-    }
-
-    [Fact]
-    public void AuthToken_AllowWithoutToken_IsError()
-    {
-        var r = ResponseParser.ParseAuthToken("""{ "_id": "x", "Response": "Allow" }""");
-        Assert.True(r.HasError);
-        Assert.False(r.IsSuccess);
-    }
-
-    [Fact]
-    public void AuthToken_TokenWithError_IsNotSuccess()
-    {
-        var r = ResponseParser.ParseAuthToken("""{ "_id": "x", "Token": "eyJ...", "Error": "BSC4069" }""");
-        Assert.False(r.IsSuccess);
-        Assert.Equal("BSC4069", r.ErrorCode);
-        Assert.Equal("", r.Token);
-    }
-
-    // ── Bearer token (REST) ─────────────────────────────────────────────────
-
-    [Fact]
-    public void BearerToken_IsRead()
-    {
-        Assert.Equal("eyJhbGci.x.y", ResponseParser.ParseBearerToken("""{ "Token": "eyJhbGci.x.y" }"""));
-        Assert.Equal("", ResponseParser.ParseBearerToken("not json"));
+        Assert.Equal(("eyJhbGci.x.y", 3600), ResponseParser.ParseAccessToken("""{ "Token": "eyJhbGci.x.y", "ExpiresIn": 3600 }"""));
+        Assert.Equal(("eyJhbGci.x.y", 0), ResponseParser.ParseAccessToken("""{ "Token": "eyJhbGci.x.y" }"""));
+        Assert.Equal(("eyJhbGci.x.y", 60), ResponseParser.ParseAccessToken("\"{ \\\"Token\\\": \\\"eyJhbGci.x.y\\\", \\\"ExpiresIn\\\": 60 }\""));
+        Assert.Equal(("", 0), ResponseParser.ParseAccessToken("not json"));
     }
 
     [Theory]

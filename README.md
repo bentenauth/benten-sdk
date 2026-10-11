@@ -24,7 +24,7 @@ Your App  ──WebSocket──►  Benten API  ──FCM push──►  User's 
 ## Prerequisites
 
 - .NET 8 or later
-- A Benten developer account (contact [support@bententechnologies.com](mailto:support@bententechnologies.com))
+- A Benten developer account and an **API key**: sign up and create a key on the [developer dashboard](https://bententechnologies.com/developers.html)
 - The user must have the Benten App installed and a registered device
 
 ---
@@ -49,13 +49,11 @@ Or add to your `.csproj`:
 using Benten.SDK;
 using Benten.SDK.Models;
 
-var benten = new BentenClient("wss://api.bententechnologies.com/v2/");
+// Load the API key from configuration or a secret store; don't hard-code it.
+var benten = new BentenClient(Environment.GetEnvironmentVariable("BENTEN_API_KEY")!);
 
-// 1. Obtain a Bearer token with your Benten developer credentials
-string jwt = await benten.GetBearerTokenAsync("your-username", "your-password");
-
-// 2. Request login approval for a user
-var result = await benten.RequestLoginApprovalAsync(jwt, new LoginRequest
+// Request login approval for a user
+var result = await benten.RequestLoginApprovalAsync(new LoginRequest
 {
     Country     = "United States",
     PhoneNumber = "6501234567",       // User's phone number on file in Benten
@@ -82,34 +80,38 @@ switch (result.Outcome)
 
 ---
 
+## API keys
+
+Create API keys on the [developer dashboard](https://bententechnologies.com/developers.html): sign in, choose **Create API key**, and copy the key (it starts with `bnt_sk_`). The full key is shown only once.
+
+- **Keep it on your server.** Store it in configuration, an environment variable or a secret store. Never put it in a mobile app, a web page or a public repository. Mobile and web apps should call your own backend, and your backend calls Benten.
+- **One key per app or environment** (e.g. "Production web server", "Staging"), so you can revoke one without affecting the others.
+- **Rotating a key:** create the new key, deploy it, then revoke the old one on the dashboard. A revoked key stops working within an hour.
+
+The SDK exchanges the key for a short-lived access token (one hour) and renews it before it expires, so you never handle tokens yourself. Create one `BentenClient` and reuse it; it is safe to use from several threads at once.
+
+---
+
 ## API reference
 
-### `BentenClient(string serverBaseUrl)`
+### `BentenClient(apiKey)` / `BentenClient(apiKey, serverBaseUrl)`
 
-Creates a client pointing at the Benten API server.
+Creates a client for the Benten API.
 
 | Parameter | Description |
 |-----------|-------------|
-| `serverBaseUrl` | Base URL, e.g. `wss://api.bententechnologies.com/v2/`. The SDK handles wss↔https conversion automatically, and appends `/v2` if the URL has no version segment. Use `new BentenClient()` to target production without passing a URL. |
+| `apiKey` | Your API key from the developer dashboard (`bnt_sk_…`). |
+| `serverBaseUrl` | Optional. Base URL, e.g. `wss://api.bententechnologies.com/v2/` (the default). The SDK handles wss↔https conversion automatically, and appends `/v2` if the URL has no version segment. |
+| `httpClient` | Optional. The `HttpClient` used to get access tokens. |
 
 ---
 
-### `GetBearerTokenAsync(username, password, timeoutSeconds?)`
-
-Authenticates with your Benten developer credentials and returns a JWT Bearer token. Supply this token to all subsequent approval methods.
-
-```csharp
-string jwt = await benten.GetBearerTokenAsync("myuser", "mypass");
-```
-
----
-
-### `RequestLoginApprovalAsync(jwt, LoginRequest, cancellationToken?)`
+### `RequestLoginApprovalAsync(LoginRequest, cancellationToken?)`
 
 Requests user approval for a login attempt.
 
 ```csharp
-var result = await benten.RequestLoginApprovalAsync(jwt, new LoginRequest
+var result = await benten.RequestLoginApprovalAsync(new LoginRequest
 {
     Country     = "United States",
     PhoneNumber = "6501234567",
@@ -119,12 +121,12 @@ var result = await benten.RequestLoginApprovalAsync(jwt, new LoginRequest
 
 ---
 
-### `RequestCCTransactionApprovalAsync(jwt, CCTransactionRequest, cancellationToken?)`
+### `RequestCCTransactionApprovalAsync(CCTransactionRequest, cancellationToken?)`
 
 Requests user approval for a credit card transaction.
 
 ```csharp
-var result = await benten.RequestCCTransactionApprovalAsync(jwt, new CCTransactionRequest
+var result = await benten.RequestCCTransactionApprovalAsync(new CCTransactionRequest
 {
     CreditCardId = "card-id-from-benten",  // Issued when the card is registered
     Amount       = "$149.99",
@@ -134,12 +136,12 @@ var result = await benten.RequestCCTransactionApprovalAsync(jwt, new CCTransacti
 
 ---
 
-### `RequestIoTSettingApprovalAsync(jwt, IoTSettingRequest, cancellationToken?)`
+### `RequestIoTSettingApprovalAsync(IoTSettingRequest, cancellationToken?)`
 
 Requests user approval for an IoT device configuration change.
 
 ```csharp
-var result = await benten.RequestIoTSettingApprovalAsync(jwt, new IoTSettingRequest
+var result = await benten.RequestIoTSettingApprovalAsync(new IoTSettingRequest
 {
     Name          = "Living Room Thermostat",
     MacAddress    = "AA:BB:CC:DD:EE:01",
@@ -149,12 +151,12 @@ var result = await benten.RequestIoTSettingApprovalAsync(jwt, new IoTSettingRequ
 
 ---
 
-### `RequestGenericNotificationApprovalAsync(jwt, GenericNotificationRequest, cancellationToken?)`
+### `RequestGenericNotificationApprovalAsync(GenericNotificationRequest, cancellationToken?)`
 
 Requests user approval for any custom action via a three-field notification.
 
 ```csharp
-var result = await benten.RequestGenericNotificationApprovalAsync(jwt, new GenericNotificationRequest
+var result = await benten.RequestGenericNotificationApprovalAsync(new GenericNotificationRequest
 {
     NotificationSubType = "Document Approval",
     Country             = "United States",
@@ -167,27 +169,6 @@ var result = await benten.RequestGenericNotificationApprovalAsync(jwt, new Gener
     Line3               = "Approve for publication"
 });
 ```
-
----
-
-### `RequestAuthTokenAsync(AuthTokenRequest, cancellationToken?)`
-
-Requests a Benten-issued JWT for a user — confirmed by the user tapping Allow on their phone. The token is returned only after explicit user consent. No password required.
-
-```csharp
-var tokenResult = await benten.RequestAuthTokenAsync(new AuthTokenRequest
-{
-    Country     = "United States",
-    PhoneNumber = "6501234567"
-});
-
-if (tokenResult.IsSuccess)
-    Console.WriteLine($"Token: {tokenResult.Token}");
-else if (tokenResult.HasError)
-    Console.WriteLine($"Error: {tokenResult.Error}");
-```
-
-`AuthTokenResult` has the same `Outcome`, `ErrorCode`, `ErrorMessage` and `Error` properties as `BentenResult`, plus `Token`, `Country` and `PhoneNumber`. `IsSuccess` is true only when the user approved and a token was issued.
 
 ---
 
@@ -210,21 +191,22 @@ else if (tokenResult.HasError)
 ### Errors: returned vs. thrown
 
 - **Returned:** errors reported by the Benten API for an approval request (invalid token, unknown phone number, inactive device…) come back in the result with `Outcome == ApprovalOutcome.Error`. Nothing is thrown.
-- **Thrown as `BentenException`:** problems talking to the Benten API, and a failed `GetBearerTokenAsync`:
+- **Thrown as `BentenException`:** a rejected API key, and problems talking to the Benten API:
+  - the API key is invalid or has been revoked: `ErrorCode` is `BSC4076` and `StatusCode` is 401;
   - the connection can't be opened within 15 seconds, or fails partway through;
   - the server closes the connection without replying (the message includes its reason, and `ErrorCode` holds any status code in it);
   - no reply arrives within 75 seconds (the server itself replies `NoResponse` after 60 seconds, so this means the server or network is in trouble);
-  - for a failed token request, `ErrorCode` holds the status code (e.g. `BSC4002` for a wrong password) and `StatusCode` holds the HTTP status.
+  - for any other failed token request, `ErrorCode` holds the status code (e.g. `BSC4032` for an inactive account) and `StatusCode` holds the HTTP status.
 - **Thrown as `OperationCanceledException`:** you cancelled the request through the `CancellationToken` you passed in. This is never reported as a timeout, so you can tell the two apart.
 
 ```csharp
 try
 {
-    string jwt = await benten.GetBearerTokenAsync(username, password);
+    var result = await benten.RequestLoginApprovalAsync(request);
 }
-catch (BentenException ex) when (ex.ErrorCode == "BSC4002")
+catch (BentenException ex) when (ex.ErrorCode == "BSC4076")
 {
-    Console.WriteLine("Wrong developer username or password.");
+    Console.WriteLine("The Benten API key is invalid or has been revoked.");
 }
 ```
 
@@ -236,18 +218,16 @@ Benten API uses `BSCxxxx` status codes in error responses. The SDK puts the code
 
 | Code | Meaning |
 |------|---------|
-| `BSC4002` | Invalid credentials |
-| `BSC4008` | Application user not found |
+| `BSC4019` | Invalid access token (the SDK gets a new one and retries once) |
 | `BSC4021` | User account is inactive |
 | `BSC4022` | No registered device for this phone number |
 | `BSC4032` | Account not active |
 | `BSC4048` | Security key unavailable — contact Benten support |
 | `BSC4056` | Device is not in Active state |
-| `BSC4067` | Phone number not found |
-| `BSC4068` | Request denied by user |
-| `BSC4069` | Token security key unavailable |
 | `BSC4073` | Invalid request: the server could not read the request message |
 | `BSC4074` | Request message is too large |
+| `BSC4075` | API key is required |
+| `BSC4076` | API key is invalid or has been revoked |
 | `NoResponse` | User did not respond within 60 seconds |
 
 ---

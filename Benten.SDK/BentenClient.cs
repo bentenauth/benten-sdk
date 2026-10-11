@@ -25,15 +25,18 @@ namespace Benten.SDK;
 /// delivered back to your application over a WebSocket connection.
 /// </para>
 ///
+/// <para>
+/// Create an API key on the Benten developer dashboard and pass it to the
+/// constructor. The client exchanges the key for a short-lived access token
+/// and renews it automatically. Keep the API key on your server: never put it
+/// in a mobile app or web page.
+/// </para>
+///
 /// <example>
 /// <code>
-/// var benten = new BentenClient("wss://api.bententechnologies.com/v2/");
+/// var benten = new BentenClient(Environment.GetEnvironmentVariable("BENTEN_API_KEY")!);
 ///
-/// // 1. Obtain a Bearer token using your Benten developer credentials
-/// string jwt = await benten.GetBearerTokenAsync("myusername", "mypassword");
-///
-/// // 2. Request login approval for a user
-/// var result = await benten.RequestLoginApprovalAsync(jwt, new LoginRequest
+/// var result = await benten.RequestLoginApprovalAsync(new LoginRequest
 /// {
 ///     Country     = "United States",
 ///     PhoneNumber = "6501234567",
@@ -50,6 +53,10 @@ namespace Benten.SDK;
 /// </code>
 /// </example>
 /// </summary>
+/// <remarks>
+/// A <see cref="BentenClient"/> is safe to use from several threads at once.
+/// Create one per API key and reuse it, so the access token is reused too.
+/// </remarks>
 public class BentenClient
 {
     /// <summary>
@@ -63,9 +70,18 @@ public class BentenClient
     /// </summary>
     public const string ApiVersion = "v2";
 
+    // Status code the Benten API uses for a token it doesn't accept (e.g. expired).
+    private const string InvalidTokenCode = "BSC4019";
+
+    private readonly string _apiKey;
     private readonly string _baseWssUrl;   // e.g. "wss://api.bententechnologies.com/v2/"
     private readonly string _baseHttpsUrl; // e.g. "https://api.bententechnologies.com/v2/"
     private readonly HttpClient _httpClient;
+
+    // The access token obtained with the API key, and when it expires.
+    private readonly SemaphoreSlim _tokenLock = new(1, 1);
+    private volatile string? _accessToken;
+    private DateTimeOffset _accessTokenExpiresAt;
 
     // The Benten API waits up to 60 seconds for the user to tap Allow or Deny, then replies
     // with NoResponse. The SDK waits 15 seconds longer so that reply arrives over a slow
@@ -88,21 +104,35 @@ public class BentenClient
     internal int MaxResponseBytes { get; set; } = 1024 * 1024;
 
     /// <summary>
-    /// Initialises a new <see cref="BentenClient"/> pointing at the production
-    /// Benten API (<see cref="DefaultServerUrl"/>).
+    /// Renew the access token this long before it expires. A request can take up
+    /// to 75 seconds, so a token is never sent with less than this left.
     /// </summary>
+    internal TimeSpan TokenRefreshMargin { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Initialises a new <see cref="BentenClient"/> for the production Benten API
+    /// (<see cref="DefaultServerUrl"/>).
+    /// </summary>
+    /// <param name="apiKey">
+    /// Your Benten API key (starts with <c>bnt_sk_</c>), from the developer dashboard.
+    /// Load it from configuration or a secret store; don't hard-code it.
+    /// </param>
     /// <param name="httpClient">
-    /// Optional <see cref="HttpClient"/> to use for REST calls. If null, a new
+    /// Optional <see cref="HttpClient"/> for the token requests. If null, a new
     /// instance is created.
     /// </param>
-    public BentenClient(HttpClient? httpClient = null)
-        : this(DefaultServerUrl, httpClient)
+    /// <exception cref="ArgumentException"><paramref name="apiKey"/> is empty.</exception>
+    public BentenClient(string apiKey, HttpClient? httpClient = null)
+        : this(apiKey, DefaultServerUrl, httpClient)
     {
     }
 
     /// <summary>
-    /// Initialises a new <see cref="BentenClient"/>.
+    /// Initialises a new <see cref="BentenClient"/> for a specific Benten API server.
     /// </summary>
+    /// <param name="apiKey">
+    /// Your Benten API key (starts with <c>bnt_sk_</c>), from the developer dashboard.
+    /// </param>
     /// <param name="serverBaseUrl">
     /// Base URL of the Benten API server, e.g.
     /// <c>wss://api.bententechnologies.com/v2/</c> or
@@ -112,14 +142,20 @@ public class BentenClient
     /// appended automatically, so <c>wss://api.bententechnologies.com/</c> also works.
     /// </param>
     /// <param name="httpClient">
-    /// Optional <see cref="HttpClient"/> to use for REST calls. If null, a new
+    /// Optional <see cref="HttpClient"/> for the token requests. If null, a new
     /// instance is created. Supply your own to share connection pools or add
     /// custom handlers (e.g. logging, retry).
     /// </param>
-    public BentenClient(string serverBaseUrl, HttpClient? httpClient = null)
+    /// <exception cref="ArgumentException"><paramref name="apiKey"/> or <paramref name="serverBaseUrl"/> is empty.</exception>
+    public BentenClient(string apiKey, string serverBaseUrl, HttpClient? httpClient = null)
     {
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new ArgumentException(
+                "apiKey must not be empty. Create an API key on the Benten developer dashboard.", nameof(apiKey));
         if (string.IsNullOrWhiteSpace(serverBaseUrl))
             throw new ArgumentException("serverBaseUrl must not be empty.", nameof(serverBaseUrl));
+
+        _apiKey = apiKey.Trim();
 
         // Normalise the base URL — ensure it ends with "/" and targets an API
         // version. All Benten endpoints live under /v2, so a bare host such as
@@ -171,61 +207,7 @@ public class BentenClient
     }
 
     // -------------------------------------------------------------------------
-    // Authentication
-    // -------------------------------------------------------------------------
-
-    /// <summary>
-    /// Obtains a Bearer JWT token from the Benten API using your developer
-    /// credentials. This token must be supplied to all WebSocket request methods.
-    /// </summary>
-    /// <param name="username">Your Benten developer username.</param>
-    /// <param name="password">Your Benten developer password.</param>
-    /// <param name="timeoutSeconds">
-    /// Desired token lifetime in seconds. Defaults to 4 hours (14400 s).
-    /// Pass 0 to use the server default.
-    /// </param>
-    /// <returns>A JWT string to use as a Bearer token.</returns>
-    /// <exception cref="BentenException">
-    /// Thrown if the server returns an error or the HTTP request fails.
-    /// <see cref="BentenException.ErrorCode"/> holds the Benten status code
-    /// (e.g. "BSC4002" for a wrong password) when the server supplies one.
-    /// </exception>
-    public async Task<string> GetBearerTokenAsync(
-        string username,
-        string password,
-        int timeoutSeconds = 0)
-    {
-        var payload = new
-        {
-            Username = username,
-            Password = password,
-            Timeout  = timeoutSeconds
-        };
-
-        var content  = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
-        var response = await _httpClient.PostAsync(_baseHttpsUrl + "auth/token", content);
-
-        var json = await response.Content.ReadAsStringAsync();
-        if (!response.IsSuccessStatusCode)
-        {
-            var (code, message) = ResponseParser.ParseRestError(json);
-            string detail = BentenResult.FormatError(code, message);
-            throw new BentenException(
-                $"GetBearerToken failed (HTTP {(int)response.StatusCode}): {(detail.Length > 0 ? detail : json)}",
-                code,
-                response.StatusCode);
-        }
-
-        // Response shape: { "Token": "eyJ..." }
-        var token = ResponseParser.ParseBearerToken(json);
-        if (string.IsNullOrWhiteSpace(token))
-            throw new BentenException($"Token not found in response: {json}");
-
-        return token;
-    }
-
-    // -------------------------------------------------------------------------
-    // Login approval
+    // Approval requests
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -233,105 +215,177 @@ public class BentenClient
     /// A push notification is sent to the user's registered Benten App;
     /// the user taps Allow or Deny and the result is returned.
     /// </summary>
-    /// <param name="jwt">Bearer token from <see cref="GetBearerTokenAsync"/>.</param>
     /// <param name="request">Login request details.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <returns>The approval result.</returns>
-    public async Task<BentenResult> RequestLoginApprovalAsync(
-        string jwt,
+    /// <exception cref="BentenException">
+    /// The API key was rejected, or the Benten API couldn't be reached.
+    /// </exception>
+    public Task<BentenResult> RequestLoginApprovalAsync(
         LoginRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        request.JWT = jwt;
-        var raw = await SendWebSocketRequestAsync("clients/loginrequest/phonenumber", request, cancellationToken);
-        return ParseBentenResult(raw);
-    }
-
-    // -------------------------------------------------------------------------
-    // Credit card transaction approval
-    // -------------------------------------------------------------------------
+        CancellationToken cancellationToken = default) =>
+        SendApprovalAsync("clients/loginrequest/phonenumber", request, cancellationToken);
 
     /// <summary>
     /// Requests user approval for a credit card transaction.
     /// A push notification is sent to the card holder's registered Benten App.
     /// </summary>
-    /// <param name="jwt">Bearer token from <see cref="GetBearerTokenAsync"/>.</param>
     /// <param name="request">Transaction request details.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <returns>The approval result.</returns>
-    public async Task<BentenResult> RequestCCTransactionApprovalAsync(
-        string jwt,
+    /// <exception cref="BentenException">
+    /// The API key was rejected, or the Benten API couldn't be reached.
+    /// </exception>
+    public Task<BentenResult> RequestCCTransactionApprovalAsync(
         CCTransactionRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        request.JWT = jwt;
-        var raw = await SendWebSocketRequestAsync("clients/creditcard/transaction", request, cancellationToken);
-        return ParseBentenResult(raw);
-    }
-
-    // -------------------------------------------------------------------------
-    // IoT setting change approval
-    // -------------------------------------------------------------------------
+        CancellationToken cancellationToken = default) =>
+        SendApprovalAsync("clients/creditcard/transaction", request, cancellationToken);
 
     /// <summary>
     /// Requests user approval for an IoT device setting change.
     /// A push notification is sent to the device owner's registered Benten App.
     /// </summary>
-    /// <param name="jwt">Bearer token from <see cref="GetBearerTokenAsync"/>.</param>
     /// <param name="request">IoT setting change request details.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <returns>The approval result.</returns>
-    public async Task<BentenResult> RequestIoTSettingApprovalAsync(
-        string jwt,
+    /// <exception cref="BentenException">
+    /// The API key was rejected, or the Benten API couldn't be reached.
+    /// </exception>
+    public Task<BentenResult> RequestIoTSettingApprovalAsync(
         IoTSettingRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        request.JWT = jwt;
-        var raw = await SendWebSocketRequestAsync("clients/iotsetting/update", request, cancellationToken);
-        return ParseBentenResult(raw);
-    }
-
-    // -------------------------------------------------------------------------
-    // Generic notification approval
-    // -------------------------------------------------------------------------
+        CancellationToken cancellationToken = default) =>
+        SendApprovalAsync("clients/iotsetting/update", request, cancellationToken);
 
     /// <summary>
     /// Requests user approval for any custom action via a generic notification.
     /// Useful for workflows that don't fit Login, CC, or IoT categories.
     /// </summary>
-    /// <param name="jwt">Bearer token from <see cref="GetBearerTokenAsync"/>.</param>
     /// <param name="request">Generic notification request details.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <returns>The approval result.</returns>
-    public async Task<BentenResult> RequestGenericNotificationApprovalAsync(
-        string jwt,
+    /// <exception cref="BentenException">
+    /// The API key was rejected, or the Benten API couldn't be reached.
+    /// </exception>
+    public Task<BentenResult> RequestGenericNotificationApprovalAsync(
         GenericNotificationRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SendApprovalAsync("clients/generic/notification/", request, cancellationToken);
+
+    /// <summary>
+    /// Sends an approval request with a current access token. If the server
+    /// rejects the token (BSC4019, e.g. it expired early), gets a new one and
+    /// sends the request once more. This is safe: the server checks the token
+    /// before it notifies the user, so the user is never asked twice.
+    /// </summary>
+    private async Task<BentenResult> SendApprovalAsync(
+        string route,
+        ClientRequest request,
+        CancellationToken cancellationToken)
     {
-        request.JWT = jwt;
-        var raw = await SendWebSocketRequestAsync("clients/generic/notification/", request, cancellationToken);
-        return ParseBentenResult(raw);
+        ArgumentNullException.ThrowIfNull(request);
+
+        string token = await GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        request.JWT = token;
+        var result = ParseBentenResult(await SendWebSocketRequestAsync(route, request, cancellationToken).ConfigureAwait(false));
+
+        if (result.ErrorCode == InvalidTokenCode)
+        {
+            ForgetAccessToken(token);
+            request.JWT = await GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+            result = ParseBentenResult(await SendWebSocketRequestAsync(route, request, cancellationToken).ConfigureAwait(false));
+        }
+
+        return result;
     }
 
     // -------------------------------------------------------------------------
-    // Auth token request (push-to-approve token issuance)
+    // Access token (internal)
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Requests a Benten-issued JWT for a user, confirmed by the user tapping
-    /// Allow on their Benten App. Unlike <see cref="GetBearerTokenAsync"/>, this
-    /// flow does not require the user's password — the token is issued only after
-    /// explicit push-notification consent.
+    /// Returns a current access token, exchanging the API key for a new one when
+    /// there is none yet or it is about to expire. Concurrent callers share one
+    /// exchange.
     /// </summary>
-    /// <param name="request">Auth token request details (country, phone number).</param>
-    /// <param name="cancellationToken">Optional cancellation token.</param>
-    /// <returns>An <see cref="AuthTokenResult"/> containing the issued JWT on success.</returns>
-    public async Task<AuthTokenResult> RequestAuthTokenAsync(
-        AuthTokenRequest request,
-        CancellationToken cancellationToken = default)
+    /// <exception cref="BentenException">
+    /// The server rejected the API key (e.g. <c>BSC4076</c>: invalid or revoked),
+    /// or couldn't be reached.
+    /// </exception>
+    internal async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken)
     {
-        var raw = await SendWebSocketRequestAsync("auth/authtokenrequest/", request, cancellationToken);
-        return ParseAuthTokenResult(raw);
+        string? token = _accessToken;
+        if (token != null && DateTimeOffset.UtcNow < _accessTokenExpiresAt - TokenRefreshMargin)
+            return token;
+
+        await _tokenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Another caller may have renewed it while we waited.
+            string? current = _accessToken;
+            if (current != null && DateTimeOffset.UtcNow < _accessTokenExpiresAt - TokenRefreshMargin)
+                return current;
+
+            var (newToken, expiresAt) = await RequestAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+            _accessTokenExpiresAt = expiresAt;
+            _accessToken = newToken;
+            return newToken;
+        }
+        finally
+        {
+            _tokenLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Drops <paramref name="rejectedToken"/> so the next request gets a new one,
+    /// unless another request has already replaced it.
+    /// </summary>
+    private void ForgetAccessToken(string rejectedToken) =>
+        Interlocked.CompareExchange(ref _accessToken, null, rejectedToken);
+
+    /// <summary>
+    /// Exchanges the API key for an access token: <c>POST auth/token { "ApiKey": ... }</c>.
+    /// </summary>
+    private async Task<(string Token, DateTimeOffset ExpiresAt)> RequestAccessTokenAsync(CancellationToken cancellationToken)
+    {
+        var payload  = JsonConvert.SerializeObject(new { ApiKey = _apiKey });
+        var content  = new StringContent(payload, Encoding.UTF8, "application/json");
+        DateTimeOffset requestedAt = DateTimeOffset.UtcNow;
+
+        HttpResponseMessage response;
+        string body;
+        try
+        {
+            response = await _httpClient.PostAsync(_baseHttpsUrl + "auth/token", content, cancellationToken).ConfigureAwait(false);
+            body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            throw new BentenException($"Could not reach the Benten API to get an access token: {ex.Message}", ex);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var (code, message) = ResponseParser.ParseRestError(body);
+            string detail = BentenResult.FormatError(code, message);
+            throw new BentenException(
+                $"The Benten API did not accept the API key (HTTP {(int)response.StatusCode}): {(detail.Length > 0 ? detail : body)}",
+                code,
+                response.StatusCode);
+        }
+
+        // Response shape: { "Token": "eyJ...", "ExpiresIn": 3600 }
+        var (token, expiresInSeconds) = ResponseParser.ParseAccessToken(body);
+        if (string.IsNullOrWhiteSpace(token))
+            throw new BentenException($"The Benten API returned no access token: {body}");
+
+        // Without ExpiresIn, assume the server default of one hour.
+        TimeSpan lifetime = TimeSpan.FromSeconds(expiresInSeconds > 0 ? expiresInSeconds : 3600);
+        return (token, requestedAt + lifetime);
     }
 
     // -------------------------------------------------------------------------
@@ -484,6 +538,4 @@ public class BentenClient
     // -------------------------------------------------------------------------
 
     private static BentenResult ParseBentenResult(string raw) => ResponseParser.ParseApproval(raw);
-
-    private static AuthTokenResult ParseAuthTokenResult(string raw) => ResponseParser.ParseAuthToken(raw);
 }

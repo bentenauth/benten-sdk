@@ -38,7 +38,7 @@ public class WebSocketTransportTests
             await TestServer.SendFramesAsync(ws, Encoding.UTF8.GetBytes("""{ "_id": "abc", "Response": "Allow" }"""), 4);
         });
 
-        var result = await server.Client().RequestLoginApprovalAsync("jwt", Login());
+        var result = await server.Client().RequestLoginApprovalAsync(Login());
 
         Assert.True(result.IsApproved);
         Assert.Equal("abc", result.RequestId);
@@ -55,7 +55,7 @@ public class WebSocketTransportTests
             await TestServer.SendFramesAsync(ws, Encoding.UTF8.GetBytes(reply), 7);
         });
 
-        var result = await server.Client().RequestLoginApprovalAsync("jwt", Login());
+        var result = await server.Client().RequestLoginApprovalAsync(Login());
 
         Assert.True(result.HasError);
         Assert.Equal("BSC4019", result.ErrorCode);
@@ -75,7 +75,7 @@ public class WebSocketTransportTests
             await ws.SendAsync(bytes.AsMemory(split), WebSocketMessageType.Text, true, CancellationToken.None);
         });
 
-        var result = await server.Client().RequestLoginApprovalAsync("jwt", Login());
+        var result = await server.Client().RequestLoginApprovalAsync(Login());
 
         Assert.True(result.IsDenied);
         Assert.Equal(reply, result.RawResponse);
@@ -102,13 +102,13 @@ public class WebSocketTransportTests
         });
 
         var login = Login();
-        var result = await server.Client().RequestLoginApprovalAsync("my-jwt", login);
+        var result = await server.Client().RequestLoginApprovalAsync(login);
         await server.WaitForHandlerAsync();
 
         Assert.True(result.IsApproved);
         Assert.NotNull(receivedRequest);
         Assert.Contains("\"RequestType\":\"LoginRequest\"", receivedRequest!);
-        Assert.Contains("\"JWT\":\"my-jwt\"", receivedRequest!);
+        Assert.Contains("\"JWT\":\"test-token-1\"", receivedRequest!);   // the token from auth/token
         Assert.Contains($"\"RequestId\":\"{login.RequestId}\"", receivedRequest!);
         Assert.False(receivedRequest!.Contains("\"_id\""));
         Assert.Equal(WebSocketMessageType.Close, afterReply);
@@ -125,7 +125,7 @@ public class WebSocketTransportTests
         });
 
         var ex = await Assert.ThrowsAsync<BentenException>(
-            () => server.Client().RequestLoginApprovalAsync("jwt", Login()));
+            () => server.Client().RequestLoginApprovalAsync(Login()));
 
         Assert.Equal("BSC4019", ex.ErrorCode);
         Assert.Contains("closed the connection", ex.Message);
@@ -141,7 +141,7 @@ public class WebSocketTransportTests
         });
 
         var ex = await Assert.ThrowsAsync<BentenException>(
-            () => server.Client().RequestLoginApprovalAsync("jwt", Login()));
+            () => server.Client().RequestLoginApprovalAsync(Login()));
 
         Assert.Equal("", ex.ErrorCode);
         Assert.Contains("closed the connection", ex.Message);
@@ -156,7 +156,7 @@ public class WebSocketTransportTests
         client.ResponseTimeout = TimeSpan.FromMilliseconds(500);
 
         var started = DateTime.UtcNow;
-        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync("jwt", Login()));
+        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync(Login()));
 
         Assert.Contains("No reply", ex.Message);
         Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10));
@@ -170,7 +170,7 @@ public class WebSocketTransportTests
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => server.Client().RequestLoginApprovalAsync("jwt", Login(), cts.Token));
+            () => server.Client().RequestLoginApprovalAsync(Login(), cts.Token));
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public class WebSocketTransportTests
         var client = server.Client();
         client.MaxResponseBytes = 1024;
 
-        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync("jwt", Login()));
+        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync(Login()));
         Assert.Contains("larger than", ex.Message);
     }
 
@@ -192,17 +192,19 @@ public class WebSocketTransportTests
     public async Task UnreachableServer_ThrowsBentenException()
     {
         int freePort = TestServer.GetUnusedPort();
-        var client = new BentenClient($"ws://127.0.0.1:{freePort}/v2/");
+        var client = new BentenClient("bnt_sk_test", $"ws://127.0.0.1:{freePort}/v2/");
 
-        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync("jwt", Login()));
-        Assert.Contains("connect", ex.Message);
+        var ex = await Assert.ThrowsAsync<BentenException>(() => client.RequestLoginApprovalAsync(Login()));
+        Assert.Contains("Could not reach the Benten API", ex.Message);
     }
 }
 
 /// <summary>
-/// A local WebSocket server for the transport tests. It accepts one kind of
-/// request on /v2/clients/loginrequest/phonenumber, reads the request text and
-/// hands the socket to the test's handler.
+/// A local Benten API stand-in for the tests. It accepts approval requests on
+/// /v2/clients/loginrequest/phonenumber, reads the request text and hands the
+/// socket to the test's handler. It also answers POST /v2/auth/token: by default
+/// with tokens "test-token-1", "test-token-2", … valid for an hour, or with the
+/// test's own token handler.
 /// </summary>
 internal sealed class TestServer : IAsyncDisposable
 {
@@ -216,11 +218,21 @@ internal sealed class TestServer : IAsyncDisposable
         BaseUrl = baseUrl;
     }
 
-    public BentenClient Client() => new(BaseUrl);
+    public const string ApiKey = "bnt_sk_test";
+
+    /// <summary>The API keys sent to auth/token, in order.</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<string> TokenRequests { get; } = new();
+
+    private int _tokensIssued;
+    internal int NextTokenNumber() => Interlocked.Increment(ref _tokensIssued);
+
+    public BentenClient Client() => new(ApiKey, BaseUrl);
 
     public Task WaitForHandlerAsync() => _handlerDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-    public static async Task<TestServer> StartAsync(Func<WebSocket, string, Task> handler)
+    public static async Task<TestServer> StartAsync(
+        Func<WebSocket, string, Task> handler,
+        Func<TestServer, string, IResult>? tokenHandler = null)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -229,6 +241,18 @@ internal sealed class TestServer : IAsyncDisposable
         TestServer? server = null;
 
         app.UseWebSockets();
+        app.MapPost("/v2/auth/token", async (HttpContext ctx) =>
+        {
+            using var reader = new StreamReader(ctx.Request.Body);
+            string body = await reader.ReadToEndAsync();
+            string apiKey = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("ApiKey").GetString() ?? "";
+            server!.TokenRequests.Enqueue(apiKey);
+
+            IResult result = tokenHandler != null
+                ? tokenHandler(server, apiKey)
+                : Results.Text($$"""{ "Token": "test-token-{{server.NextTokenNumber()}}", "ExpiresIn": 3600 }""", "application/json");
+            await result.ExecuteAsync(ctx);
+        });
         app.Map("/v2/clients/loginrequest/phonenumber", async (HttpContext ctx) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest)

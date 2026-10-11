@@ -67,6 +67,11 @@ public static class BentenStatusCodes
             ["BSC4069"] = "Token security key unavailable. Contact Benten support.",
             ["BSC4073"] = "Invalid request. The server could not read the request message.",
             ["BSC4074"] = "Request message is too large.",
+            ["BSC4075"] = "API key is required.",
+            ["BSC4076"] = "API key is invalid or has been revoked. Check the key, or create a new one on the developer dashboard.",
+            ["BSC4077"] = "API key not found.",
+            ["BSC4078"] = "Too many API keys. Revoke one you no longer use before creating another.",
+            ["BSC4079"] = "Too many notifications sent to this phone. Try again in a few minutes.",
             ["BSC5000"] = "Internal server error. Try again later.",
         };
 

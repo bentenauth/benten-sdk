@@ -41,8 +41,9 @@ public abstract class ClientRequest
     public string RequestType { get; }
 
     /// <summary>
-    /// The Bearer JWT token obtained from <see cref="BentenClient.GetBearerTokenAsync"/>.
-    /// Required for all client WebSocket endpoints.
+    /// The access token, set by <see cref="BentenClient"/> from your API key just
+    /// before the request is sent. Sent to the server as <c>JWT</c>.
     /// </summary>
-    public string JWT { get; set; } = string.Empty;
+    [Newtonsoft.Json.JsonProperty("JWT")]
+    internal string JWT { get; set; } = string.Empty;
 }
