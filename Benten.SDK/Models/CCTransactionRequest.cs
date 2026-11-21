@@ -35,8 +35,9 @@ public class CCTransactionRequest : ClientRequest
     public string Amount { get; set; } = string.Empty;
 
     /// <summary>
-    /// The retailer or merchant name (e.g. "Home Depot", "www.amazon.com").
-    /// Displayed on the user's notification.
+    /// The retailer or merchant name (e.g. "Home Depot"). The Benten App shows it
+    /// as "Merchant", below "Requested by", which is always your account's
+    /// verified site and can't be set in the request.
     /// </summary>
     public string Retailer { get; set; } = string.Empty;
 }

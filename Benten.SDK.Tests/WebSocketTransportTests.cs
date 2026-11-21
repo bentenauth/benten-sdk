@@ -110,7 +110,7 @@ public class WebSocketTransportTests
         Assert.Contains("\"RequestType\":\"LoginRequest\"", receivedRequest!);
         Assert.Contains("\"JWT\":\"test-token-1\"", receivedRequest!);   // the token from auth/token
         Assert.Contains($"\"RequestId\":\"{login.RequestId}\"", receivedRequest!);
-        Assert.False(receivedRequest!.Contains("\"_id\""));
+        Assert.DoesNotContain("\"_id\"", receivedRequest!);
         Assert.Equal(WebSocketMessageType.Close, afterReply);
     }
 

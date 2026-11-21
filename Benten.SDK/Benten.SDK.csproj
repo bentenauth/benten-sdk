@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Benten.SDK</AssemblyName>
     <RootNamespace>Benten.SDK</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>Huzefa Karachiwala</Authors>
     <Description>Client SDK for the Benten Authentication and Authorization Platform. Enables applications to request user approval for login, credit card transactions, IoT setting changes, and generic notifications via push notification.</Description>
     <PackageTags>benten;authentication;authorization;push-notification;websocket</PackageTags>
@@ -21,7 +21,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
-    <PackageReleaseNotes>First release. Authenticate with an API key from the Benten developer dashboard: new BentenClient(apiKey). Request approval for logins, credit card transactions, IoT setting changes and generic notifications.</PackageReleaseNotes>
+    <PackageReleaseNotes>Recognises BSC4098 (account in test mode until its site is verified) with a readable message. Docs: site verification and test mode; card requests show your verified site as "Requested by" and Retailer as "Merchant". No API changes; drop-in upgrade from 1.0.0.</PackageReleaseNotes>
 
     <!-- Symbols and Source Link, so developers can step into the SDK when debugging -->
     <IncludeSymbols>true</IncludeSymbols>

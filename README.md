@@ -38,7 +38,7 @@ dotnet add package Benten.SDK
 Or add to your `.csproj`:
 
 ```xml
-<PackageReference Include="Benten.SDK" Version="1.0.0" />
+<PackageReference Include="Benten.SDK" Version="1.0.1" />
 ```
 
 ---
@@ -90,6 +90,15 @@ Create API keys on the [developer dashboard](https://bententechnologies.com/deve
 
 The SDK exchanges the key for a short-lived access token (one hour) and renews it before it expires, so you never handle tokens yourself. Create one `BentenClient` and reuse it; it is safe to use from several threads at once.
 
+### Site verification and test mode
+
+The Benten App shows your account's site on every request it sends to your users' phones. Before your account can reach other people's phones, prove you control that site on the developer dashboard (**Site verification**), with either:
+
+- a DNS TXT record: name `_benten-verification.<your domain>`, value `benten-site-verification=<your code>`; or
+- a file at `https://<your domain>/.well-known/benten-site-verification.txt` containing that line.
+
+Until then your account is in **test mode**: everything works, but only with your own phone number (the one on your developer account). Requests to any other number fail with `BSC4098`. Sites on `localhost` or an IP address can't be verified, so they stay in test mode.
+
 ---
 
 ## API reference
@@ -130,7 +139,7 @@ var result = await benten.RequestCCTransactionApprovalAsync(new CCTransactionReq
 {
     CreditCardId = "card-id-from-benten",  // Issued when the card is registered
     Amount       = "$149.99",
-    Retailer     = "Home Depot"
+    Retailer     = "Home Depot"            // Shown as "Merchant"; "Requested by" is always your verified site
 });
 ```
 
@@ -228,6 +237,7 @@ Benten API uses `BSCxxxx` status codes in error responses. The SDK puts the code
 | `BSC4074` | Request message is too large |
 | `BSC4075` | API key is required |
 | `BSC4076` | API key is invalid or has been revoked |
+| `BSC4098` | Your site isn't verified yet: in test mode you can reach only your own phone number |
 | `NoResponse` | User did not respond within 60 seconds |
 
 ---

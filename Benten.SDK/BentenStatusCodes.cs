@@ -72,6 +72,7 @@ public static class BentenStatusCodes
             ["BSC4077"] = "API key not found.",
             ["BSC4078"] = "Too many API keys. Revoke one you no longer use before creating another.",
             ["BSC4079"] = "Too many notifications sent to this phone. Try again in a few minutes.",
+            ["BSC4098"] = "Your site isn't verified yet, so your account is in test mode: it can reach only your own phone number. Verify your site on the developer dashboard.",
             ["BSC5000"] = "Internal server error. Try again later.",
         };
 
